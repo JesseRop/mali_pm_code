@@ -1,0 +1,147 @@
+---
+output: html_document
+date: "2024-07-29"
+title: "MSC pm_barcodes"
+author: 'Jesse Rop'
+output:
+  html_document:
+    toc: true
+    theme: united
+    code_folding: hide
+    df_print: paged
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(Seurat)
+  # library(rgl)
+  # library(DoubletFinder)
+  library(ggrepel)
+  library(ggpubr)
+  library(dplyr) 
+  library(stringr)
+  library(purrr)
+  library(readr)
+  library(tibble)
+  library(ggplot2)
+
+  
+  conflict_prefer("select", "dplyr")
+  conflict_prefer("filter", "dplyr")
+  conflict_prefer("rename", "dplyr")
+  conflict_prefer("map", "purrr")
+  conflict_prefer("count", "dplyr")
+  conflicts_prefer(base::saveRDS)
+  conflicts_prefer(SingleCellExperiment::colData)
+})
+```
+
+
+```{r, setup}
+
+# knitr::opts_knit$set(root.dir = '/Users/jr35/Google Drive/My Drive/PHD_documents/malaria_phd/Mali2')
+knitr::opts_knit$set(root.dir = '/lustre/scratch126/tol/teams/lawniczak/users/jr35/phd/Mali2/')
+```
+
+initialize variable for the sample names
+
+```{r}
+mrc_sk21_pm_summary <- read_csv("data/raw/MRC_Sample_Analysis_Summary_Summary.csv", skip = 1) 
+```
+
+
+```{r}
+mrc_sk21_pm_summary %>% filter(str_detect(mixed_infection, "pm|mixed") & pm > 0 & str_detect(shortids, "SetA|SetB|SetC") )
+```
+
+```{r}
+## Getting only the jumpcode run where a sample was ran twice (non-jumpcode and jumpcode)
+pm_22_jcode <- mrc_sk21_pm_summary %>% 
+  filter(str_detect(mixed_infection, "pm|mixed") & pm > 0 & str_detect(shortids, "SetA|SetB|SetC") ) %>%
+  mutate(sample_nm = str_remove_all(Sample_Name, "_JC")) %>%
+  group_by(sample_nm) %>%
+  add_count(name = "runs") %>%
+  filter(runs == 1 | (runs == 2 & str_detect(Sample_Name, "JC")) |  (Sample_Name == "MSC15")) %>%
+  filter(Sample_Name != "MSC15_JC")
+
+pm_22_jcode
+```
+
+
+```{r}
+## Getting  Pm solo infections
+pm_solo_mdata <- pm_22_jcode %>% 
+  filter(str_detect(mixed_infection2, "solo")) %>%
+  group_by(sample_nm) %>%
+  add_count(name = "runs") %>%
+  filter(pm > 100) %>%
+  filter(runs == 1 | runs ==2 & str_detect(Sample_Name, "JC")) 
+```
+
+```{r}
+pm_solo_mdata
+```
+
+
+```{r}
+## Getting both Pm solo infections and those mixed with other species
+pm_solo_mixed_mdata <- pm_22_jcode %>% 
+  group_by(sample_nm) %>%
+  add_count(name = "runs") %>%
+  filter(pm > 100) %>%
+  # filter(!(Sample_Name %in% c("MSC65", "MSC69-71"))) %>%
+  filter(runs == 1 | runs ==2 & str_detect(Sample_Name, "JC")) %>%
+  rename('irods_id' = Sanger_SampleID)
+```
+
+```{r}
+pm_solo_mixed_mdata
+```
+
+
+Copy the irods metadata file from local into farm
+```{r, eval=T}
+write_csv(pm_solo_mixed_mdata, "data/raw/Pm/pm_solo_mixed_mdata.csv")
+```
+
+```{r, eval=T}
+pm_solo_mixed_mdata_decode <- pm_solo_mixed_mdata %>% select(sample_nm, irods_id, mixed_infection2)
+
+write_csv(pm_solo_mixed_mdata_decode, "data/raw/Pm/pm_solo_mixed_mdata_decode.csv")
+```
+
+
+```{r}
+## Mixed species barcodes from sunil
+sk21_mixed_sp_decode <- readRDS("data/processed/Part1_sp_barcodes_PfPmPoc.RDS")
+```
+
+
+```{r}
+## Get the donor and irods ID for mixed infections
+# mxd_source_irods <-  pm_solo_mixed_mdata[pm_solo_mixed_mdata$mixed_infection2 == "mixed",][,c("sample_nm", "irods_id")] %>% deframe()
+mxdn_solo_source_irods <- pm_solo_mixed_mdata[pm_solo_mixed_mdata$mixed_infection2 %in% c("solo", "mixed"),][,c("sample_nm", "irods_id")] %>% deframe() 
+
+mxdn_solo_source_irods
+```
+
+
+```{r}
+## Write all Pf barcodes for solo and mixed species donor for souporcell
+imap(mxdn_solo_source_irods, ~{
+    system(paste0("mkdir -p data/raw/Pm/", .y, "/outs/sk21_bcodes_pp"))
+    print(length(sk21_mixed_sp_decode$sp_barcodes[[.x]]$pm_filt))
+    write(sk21_mixed_sp_decode$sp_barcodes[[.x]]$pm_filt, paste0("data/raw/Pm/", .y, "/outs/sk21_bcodes_pp/barcodes.tsv"))
+    system(paste0("gzip -f data/raw/Pm/", .y, "/outs/sk21_bcodes_pp/barcodes.tsv"))
+  })
+
+```
+
+
+Run souporcell using nextflow like below
+```{r}
+gogo()
+
+# nextflow run soupc_v25_m2.nf --id_decode "/lustre/scratch126/tol/teams/lawniczak/users/jr35/phd/Mali2/data/raw/Pm/pm_solo_mixed_mdata_decode.csv" --bam "/lustre/scratch126/tol/teams/lawniczak/projects/malaria_single_cell/mali_field_runs/2022/data/cellranger_runs/Pm/*/outs/possorted_genome_bam.bam" --bcodes "/lustre/scratch126/tol/teams/lawniczak/users/jr35/phd/Mali2/data/raw/Pm/MSC*/outs/sk21_bcodes_pp/barcodes.tsv.gz" --o_dir "/lustre/scratch126/tol/teams/lawniczak/users/jr35/phd/Mali2/data/processed/Pm/" --soup_dir "soupc" --scrpt "/lustre/scratch126/tol/teams/lawniczak/users/jr35/phd/multipurpose_scripts/soupc_v25_mnmap_hsat_310.sh" --ref_file "PlasmoDB-66_PmalariaeUG01_Genome.fasta" --hsat_ref_file "Pm66" -resume
+
+```
