@@ -21,5 +21,6 @@ Run the scripts in the following order
 Note
 - You may need to change the "/lustre/scratch126/tol/teams/lawniczak/users/jr35/phd/multipurpose_scripts/" to your_dir"bash_scripts/" to access bash scripts being called by the nextflow script.
 - hisat2_ref_build.sh - needed to generate hisat appropriate references
+- The .Rmd scripts may need to call "pf_common_vars.R", "plotting_common_fns.R", "seu_sce_common_fns.R" scripts
 
    
